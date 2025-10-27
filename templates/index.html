@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vendor Monitoring Dashboard</title>
+    <link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="nav-tabs">
+                <button class="tab-btn active" data-tab="discount-stock">Discount Stocks</button>
+                <button class="tab-btn" data-tab="vendor-status">Vendor Status</button>
+                <button class="tab-btn" data-tab="vendor-product-status">Vendor Product Status</button>
+            </div>
+            <div class="vendor-controls">
+                <button id="theme-toggle" class="theme-toggle-btn" title="Toggle Dark Mode">
+                    <span class="theme-icon">🌙</span>
+                </button>
+                <label for="vendor-upload" class="upload-btn">Upload Vendor Codes</label>
+                <input type="file" id="vendor-upload" accept=".txt,.csv" style="display: none;">
+                <button id="clear-vendors" class="clear-btn">Clear Vendor Codes</button>
+            </div>
+        </header>
+
+        <main class="content">
+            <div id="discount-stock" class="tab-content active">
+                <div class="tab-header-row">
+                    <h2>DISCOUNT STOCKS ALERT</h2>
+                    <div class="view-toggle">
+                        <button class="toggle-btn active" data-view="alerts">Alerts</button>
+                        <button class="toggle-btn" data-view="fixed">Fixed</button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="progress-bar-container">
+                    <div class="progress-bar-label">
+                        <span>Cleared Alerts Progress</span>
+                        <span id="discount-progress-text">0 cleared</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="discount-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="table-container alerts-view">
+                    <table id="discount-stock-table" class="alert-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Alert Type</th>
+                                <th>Vendor Code</th>
+                                <th>Vendor Name</th>
+                                <th>Discount Stock</th>
+                                <th>Product Stock</th>
+                                <th>Product Discount Ratio</th>
+                                <th>Product Header Name</th>
+                                <th>Product Name</th>
+                                <th>Discount Start At</th>
+                                <th>Discount End At</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+
+                <!-- Cleared Alerts Table -->
+                <div class="cleared-section fixed-view" style="display: none;">
+                    <h3>DISCOUNTED ITEMS FIXED</h3>
+                    <div class="table-container">
+                        <table id="discount-stock-cleared-table" class="alert-table cleared-table">
+                            <thead>
+                                <tr>
+                                    <th>Cleared Time</th>
+                                    <th>Alert Type</th>
+                                    <th>Vendor Code</th>
+                                    <th>Vendor Name</th>
+                                    <th>Discount Stock</th>
+                                    <th>Product Stock</th>
+                                    <th>Product Discount Ratio</th>
+                                    <th>Product Header Name</th>
+                                    <th>Product Name</th>
+                                    <th>Discount Start At</th>
+                                    <th>Discount End At</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="vendor-status" class="tab-content">
+                <div class="tab-header-row">
+                    <h2>VENDOR STATUS ALERTS</h2>
+                    <div class="view-toggle">
+                        <button class="toggle-btn active" data-view="alerts">Alerts</button>
+                        <button class="toggle-btn" data-view="fixed">Fixed</button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="progress-bar-container">
+                    <div class="progress-bar-label">
+                        <span>Cleared Alerts Progress</span>
+                        <span id="vendor-status-progress-text">0 cleared</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="vendor-status-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="two-column-layout">
+                    <div class="left-column">
+                        <div class="table-container alerts-view">
+                            <table id="vendor-status-table" class="alert-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Alert Type</th>
+                                        <th>Vendor Code</th>
+                                        <th>Vendor Name</th>
+                                        <th>Vendor Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+
+                        <!-- Cleared Alerts Table -->
+                        <div class="cleared-section fixed-view" style="display: none;">
+                            <h3>VENDOR GOT ACTIVATED</h3>
+                            <div class="table-container">
+                                <table id="vendor-status-cleared-table" class="alert-table cleared-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Cleared Time</th>
+                                            <th>Alert Type</th>
+                                            <th>Vendor Code</th>
+                                            <th>Vendor Name</th>
+                                            <th>Vendor Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="right-column">
+                        <div class="stats-panel">
+                            <div class="stat-box">
+                                <h3>Count Total Uploaded Vendors</h3>
+                                <p id="total-vendors">0</p>
+                            </div>
+                            <div class="stat-box">
+                                <h3>Count of Active In Shift Vendors</h3>
+                                <p id="active-vendors">0</p>
+                            </div>
+                            <div class="stat-box">
+                                <h3>Count of Not Active In Shift Vendors</h3>
+                                <p id="inactive-vendors">0</p>
+                            </div>
+                            <button class="export-btn" onclick="exportActiveVendors()">Export Active Vendors</button>
+                            <button class="export-btn" onclick="exportInactiveVendors()">Export Not Active Vendors</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="vendor-product-status" class="tab-content">
+                <div class="tab-header-row">
+                    <h2>VENDOR PRODUCTS STATUS</h2>
+                    <div class="view-toggle">
+                        <button class="toggle-btn active" data-view="alerts">Alerts</button>
+                        <button class="toggle-btn" data-view="fixed">Fixed</button>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="progress-bar-container">
+                    <div class="progress-bar-label">
+                        <span>Cleared Alerts Progress</span>
+                        <span id="product-status-progress-text">0 cleared</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="product-status-progress-fill" class="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="sub-nav">
+                    <button class="sub-tab-btn active" data-subtab="stock">Stock</button>
+                    <button class="sub-tab-btn" data-subtab="visibility">Visibility</button>
+                </div>
+                <div class="two-column-layout">
+                    <div class="left-column">
+                        <div id="stock" class="sub-tab-content active">
+                            <div class="table-container alerts-view">
+                                <table id="stock-table" class="alert-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Alert Type</th>
+                                            <th>Vendor Code</th>
+                                            <th>Vendor Name</th>
+                                            <th>Business Line</th>
+                                            <th>Total P.Headers</th>
+                                            <th>Stock Issues</th>
+                                            <th>Stock Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+
+                            <!-- Cleared Stock Alerts Table -->
+                            <div class="cleared-section fixed-view" style="display: none;">
+                                <h3>FIXED VENDORS WITH STOCK ISSUE</h3>
+                                <div class="table-container">
+                                    <table id="stock-cleared-table" class="alert-table cleared-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Cleared Time</th>
+                                                <th>Alert Type</th>
+                                                <th>Vendor Code</th>
+                                                <th>Vendor Name</th>
+                                                <th>Business Line</th>
+                                                <th>Total P.Headers</th>
+                                                <th>Stock Issues</th>
+                                                <th>Stock Rate</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="visibility" class="sub-tab-content">
+                            <div class="table-container alerts-view">
+                                <table id="visibility-table" class="alert-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Alert Type</th>
+                                            <th>Vendor Code</th>
+                                            <th>Vendor Name</th>
+                                            <th>Business Line</th>
+                                            <th>Total P.Headers</th>
+                                            <th>Visibility Issues</th>
+                                            <th>Visibility Rate</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+
+                            <!-- Cleared Visibility Alerts Table -->
+                            <div class="cleared-section fixed-view" style="display: none;">
+                                <h3>FIXED VENDORS WITH VISIBILITY ISSUE</h3>
+                                <div class="table-container">
+                                    <table id="visibility-cleared-table" class="alert-table cleared-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Cleared Time</th>
+                                                <th>Alert Type</th>
+                                                <th>Vendor Code</th>
+                                                <th>Vendor Name</th>
+                                                <th>Business Line</th>
+                                                <th>Total P.Headers</th>
+                                                <th>Visibility Issues</th>
+                                                <th>Visibility Rate</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="right-column">
+                        <div class="stats-panel">
+                            <div class="stat-box">
+                                <h3>Count Uploaded Vendors</h3>
+                                <p id="product-total-vendors">0</p>
+                            </div>
+                            <div class="stat-box">
+                                <h3>Count Each Business Line</h3>
+                                <div id="business-lines"></div>
+                            </div>
+                            <div class="stat-box" id="alert-counts-box">
+                                <h3 id="alert-counts-title">Count Alert Types Stock</h3>
+                                <div id="alert-counts"></div>
+                            </div>
+                            <button class="export-btn" id="export-product-btn" onclick="exportStockIssues()">Export Excel Report of Stock Issues</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="static/app.js"></script>
+</body>
+</html>

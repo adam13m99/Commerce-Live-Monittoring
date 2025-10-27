@@ -1,0 +1,73 @@
+stages:
+  - docker_build
+  - init_ci
+
+variables:
+  KUBER_NS: "x-commerce-monitoring"
+  DOCKER_FILE_PATH: "Dockerfile"
+  TRIGGER_JOB_REF: "main"
+  LATEST: "latest"
+
+########################################################################
+#                        DOCKER BUILD                                  #
+########################################################################
+
+Docker Build:
+  stage: docker_build
+  before_script:
+    - |
+      # INFORMATION:
+      CYN='\033[0;36m'
+      MAG='\033[0;35m'
+      NC='\033[0m' # No Color
+      echo -e "${CYN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+      echo -e "${CYN}║                  X-Commerce Monitoring                        ║${NC}"
+      echo -e "${CYN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+      echo -e "${MAG}TAG:: ${CYN}$CI_COMMIT_TAG${NC}"
+      echo -e "${MAG}PROJECT NAME:: ${CYN}$CI_PROJECT_NAME${NC}"
+      echo -e "${MAG}STARTING ._._._.._._._.._._._.._._._.._._._.._._._.._._._.._._._.${NC}"
+  script:
+    - docker info
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker build -f "$DOCKER_FILE_PATH" -t "$CI_REGISTRY_IMAGE":"$CI_COMMIT_REF_SLUG" .
+    - docker tag "$CI_REGISTRY_IMAGE":"$CI_COMMIT_REF_SLUG" "$CI_REGISTRY_IMAGE":"$LATEST"
+    - docker push "$CI_REGISTRY_IMAGE":"$CI_COMMIT_REF_SLUG"
+    - docker push "$CI_REGISTRY_IMAGE":"$LATEST"
+  only:
+    - "/^v\\d{1,9}\\.\\d{1,9}\\.\\d{1,9}-[p][r][d]$/"
+  tags:
+    - prd
+
+########################################################################
+#                             INITIAL CI                               #
+########################################################################
+
+Initial CI:
+  stage: init_ci
+  image:
+    name: $DOCKER_IMG_INIT_CI
+  script:
+    - |
+      # INFORMATION:
+      CYN='\033[0;36m'
+      MAG='\033[0;35m'
+      NC='\033[0m' # No Color
+      echo -e "${CYN}     ._._._.._._._.._._._.._._._.._._._.._._._.._._._.._._._.     ${NC}"
+      echo -e "${MAG}TRIGGER_JOB_PROJECT_NAME:: ${CYN}$CI_COMMIT_TAG${NC}"
+      echo -e "${MAG}PROJECT NAME:: ${CYN}$CI_PROJECT_NAME${NC}"
+      echo -e "${MAG}TRIGGER_JOB_PROJECT_NAME:: ${CYN}$CI_PROJECT_NAME${NC}"
+      echo -e "${MAG}TRIGGER_JOB_TAG:: ${CYN}$CI_COMMIT_TAG${NC}"
+      echo -e "${MAG}TRIGGER_JOB_PROJECT_ID:: ${CYN}$CI_PROJECT_ID${NC}"
+      echo -e "${MAG}TRIGGER_JOB_COMMIT_REF_NAME:: ${CYN}$CI_COMMIT_REF_NAME${NC}"
+      echo -e "${MAG}TRIGGER_JOB_PROJECT_PATH:: ${CYN}$CI_PROJECT_PATH${NC}"
+      echo -e "${MAG}TRIGGER_JOB:: ${CYN}$CI_PROJECT_NAME${NC}"
+      echo -e "${MAG}TRIGGER_JOB_REG_URL:: ${CYN}$CI_REGISTRY_IMAGE${NC}"
+      echo -e "${MAG}TRIGGER_JOB_KUBER_NS:: ${CYN}$KUBER_NS${NC}"
+      echo -e "${MAG}TRIGGER_JOB_COMMIT_REF_SLUG:: ${CYN}$CI_COMMIT_REF_SLUG${NC}"
+      echo -e "${CYN}     ._._._.._._._.._._._.._._._.._._._.._._._.._._._.._._._.     ${NC}"
+  after_script:
+    - curl -s -X POST -F "token=$PRD_TRIGGER_JOB_TOKEN_NEW" -F "ref=$TRIGGER_JOB_REF" -F "variables[TRIGGER_JOB_PROJECT_NAME]=$CI_PROJECT_NAME" -F "variables[TRIGGER_JOB_TAG]=$CI_COMMIT_TAG" -F "variables[TRIGGER_JOB_PROJECT_PATH]=$CI_PROJECT_PATH" -F "variables[TRIGGER_JOB]=$CI_PROJECT_NAME" -F "variables[TRIGGER_JOB_REG_URL]=$CI_REGISTRY_IMAGE" -F "variables[TRIGGER_JOB_KUBER_NS]=$KUBER_NS" -F "variables[TRIGGER_JOB_PROJECT_ID]=$CI_PROJECT_ID" -F "variables[TRIGGER_JOB_COMMIT_REF_NAME]=$CI_COMMIT_REF_NAME" -F "variables[TRIGGER_JOB_COMMIT_REF_SLUG]=$CI_COMMIT_REF_SLUG" $PRD_TRIGGER_JOB_URL_NEW
+  only:
+    - "/^v\\d{1,9}\\.\\d{1,9}\\.\\d{1,9}-[p][r][d]$/"
+  tags:
+    - prd
