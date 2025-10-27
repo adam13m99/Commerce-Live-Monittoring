@@ -4,7 +4,7 @@ Real-time vendor monitoring dashboard for commerce operations. Tracks vendor sta
 
 ---
 
-## 🎯 Overview
+## Overview
 
 X-Commerce Monitoring is a Flask-based dashboard that provides real-time monitoring of:
 - **Discount Stock Levels** - Track available discount inventory
@@ -15,20 +15,20 @@ The dashboard fetches data from Metabase, processes alerts based on configurable
 
 ---
 
-## ✨ Features
+## Features
 
-- 🔴 **Real-time Alerts** - WebSocket-based live notifications
-- 📊 **Metabase Integration** - Automated data fetching from Metabase queries
-- 🎨 **Severity-based Color Coding** - Visual alerts (cherry, red, yellow, green)
-- 🔄 **Background Jobs** - Automated data refresh at configurable intervals
-- 👥 **Multi-user Support** - Shared state across all connected users
-- 🔐 **Vault Integration** - Secure credential management
-- 🐳 **Docker Ready** - Containerized deployment
-- 🚀 **CI/CD Pipeline** - GitLab + Kubernetes automation
+- **Real-time Alerts** - WebSocket-based live notifications
+- **Metabase Integration** - Automated data fetching from Metabase queries
+- **Severity-based Color Coding** - Visual alerts (cherry, red, yellow, green)
+- **Background Jobs** - Automated data refresh at configurable intervals
+- **Multi-user Support** - Shared state across all connected users
+- **Vault Integration** - Secure credential management
+- **Docker Ready** - Containerized deployment
+- **CI/CD Pipeline** - GitLab + Kubernetes automation
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -70,7 +70,7 @@ The dashboard fetches data from Metabase, processes alerts based on configurable
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Local Development (Docker)
 
@@ -106,11 +106,11 @@ if __name__ == '__main__':
 python test_windows.py
 ```
 
-**⚠️ Important:** For production-like testing on Windows, use `docker-compose up -d`
+**Important:** For production-like testing on Windows, use `docker-compose up -d`
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 ### Development
 - Docker & Docker Compose
@@ -125,7 +125,7 @@ python test_windows.py
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
 All configuration is managed via environment variables (injected from Vault in production).
 
@@ -155,7 +155,7 @@ See `config.py` for complete list of configuration options.
 
 ---
 
-## 📦 Project Structure
+## Project Structure
 
 ```
 x-commerce-monitoring/
@@ -181,25 +181,25 @@ x-commerce-monitoring/
 
 ---
 
-## 🎨 Alert Severity Levels
+## Alert Severity Levels
 
 The dashboard uses color-coded severity levels:
 
 | Severity | Color | Description |
 |----------|-------|-------------|
-| `cherry` | 🍒 Dark Red | Critical - Immediate action required |
-| `red` | 🔴 Red | High priority |
-| `red-high` | 🔴 Bright Red | Very high priority |
-| `yellow` | 🟡 Yellow | Warning |
-| `green` | 🟢 Green | Normal |
-| `light-green` | 🟢 Light Green | Good |
-| `dark-green` | 🟢 Dark Green | Excellent |
+| `cherry` | Dark Red | Critical - Immediate action required |
+| `red` | Red | High priority |
+| `red-high` | Bright Red | Very high priority |
+| `yellow` | Yellow | Warning |
+| `green` | Green | Normal |
+| `light-green` | Light Green | Good |
+| `dark-green` | Dark Green | Excellent |
 
 Severity thresholds are configurable in `config.py`.
 
 ---
 
-## 🚀 Deployment
+## Deployment
 
 ### Tag-Based Deployment Workflow
 
@@ -257,21 +257,21 @@ Production:
 **Pattern:** `/^v\d{1,9}\.\d{1,9}\.\d{1,9}-[p][r][d]$/`
 
 **Valid Examples:**
-- ✅ `v1.0.0-prd` - Initial release
-- ✅ `v1.0.1-prd` - Bug fix
-- ✅ `v1.1.0-prd` - New feature
-- ✅ `v2.0.0-prd` - Breaking change
+- `v1.0.0-prd` - Initial release
+- `v1.0.1-prd` - Bug fix
+- `v1.1.0-prd` - New feature
+- `v2.0.0-prd` - Breaking change
 
 **Invalid Examples:**
-- ❌ `v1.0.0-prod` - Must be `-prd` not `-prod`
-- ❌ `v1.0.0` - Missing `-prd` suffix
-- ❌ `1.0.0-prd` - Missing `v` prefix
+- `v1.0.0-prod` - Must be `-prd` not `-prod`
+- `v1.0.0` - Missing `-prd` suffix
+- `1.0.0-prd` - Missing `v` prefix
 
 See [DEPLOYMENT-WORKFLOW.md](DEPLOYMENT-WORKFLOW.md) for detailed deployment guide.
 
 ---
 
-## 🔐 Security
+## Security
 
 ### Secrets Management
 
@@ -290,15 +290,15 @@ vault kv put secret/x-commerce-monitoring/app \
 
 ### Important Security Notes
 
-- ❌ **Never commit secrets** to version control
-- ✅ All sensitive values use placeholders in `config.py`
-- ✅ Real credentials only in Vault
-- ✅ Container runs as non-root user (UID 1000)
-- ✅ Health checks don't expose sensitive data
+- **Never commit secrets** to version control
+- All sensitive values use placeholders in `config.py`
+- Real credentials only in Vault
+- Container runs as non-root user (UID 1000)
+- Health checks don't expose sensitive data
 
 ---
 
-## 🏥 Health Checks
+## Health Checks
 
 ### Liveness Probe
 ```bash
@@ -333,7 +333,7 @@ curl http://localhost:5000/ready
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ### Local Testing with Docker
 
@@ -365,14 +365,14 @@ docker-compose logs -f vendor-monitoring
 
 # You should see:
 # INFO - Fetching discount stock data...
-# INFO - ✅ Discount stock data updated: X vendors
+# INFO - Discount stock data updated: X vendors
 # INFO - Fetching vendor status data...
-# INFO - ✅ Vendor status updated: Y vendors
+# INFO - Vendor status updated: Y vendors
 ```
 
 ---
 
-## 📊 API Endpoints
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -396,7 +396,7 @@ docker-compose logs -f vendor-monitoring
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Issue: WebSocket not connecting
 
@@ -462,7 +462,7 @@ docker exec vendor-monitoring curl http://localhost:5000/health
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 - [DEPLOYMENT-WORKFLOW.md](DEPLOYMENT-WORKFLOW.md) - Complete deployment guide
 - [DEPLOYMENT-FILES-EXPLAINED.md](DEPLOYMENT-FILES-EXPLAINED.md) - Understanding deployment files
@@ -471,7 +471,7 @@ docker exec vendor-monitoring curl http://localhost:5000/health
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 ### Development Workflow
 
@@ -512,7 +512,7 @@ git push origin v1.1.0-prd
 
 ---
 
-## 🔄 Version History
+## Version History
 
 ### v1.0.0-prd (Initial Release)
 - Real-time vendor monitoring dashboard
@@ -525,13 +525,13 @@ git push origin v1.1.0-prd
 
 ---
 
-## 📝 License
+## License
 
 Internal project - oFood Commerce Team
 
 ---
 
-## 👥 Team
+## Team
 
 **Development Team:** Commerce Monitoring Team
 **DevOps Team:** Infrastructure Team
@@ -539,7 +539,7 @@ Internal project - oFood Commerce Team
 
 ---
 
-## 🆘 Support
+## Support
 
 ### Internal Support
 
@@ -556,7 +556,7 @@ Internal project - oFood Commerce Team
 
 ---
 
-## ⚡ Performance
+## Performance
 
 ### Optimizations
 
@@ -580,7 +580,7 @@ Internal project - oFood Commerce Team
 
 ---
 
-## 🔮 Future Enhancements
+## Future Enhancements
 
 - [ ] Historical data tracking and charts
 - [ ] Email/Slack notifications
