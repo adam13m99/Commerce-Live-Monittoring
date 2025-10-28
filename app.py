@@ -148,8 +148,8 @@ def fetch_vendor_status() -> pd.DataFrame:
     )
 
 def fetch_vendor_product_status() -> pd.DataFrame:
-    """Fetch vendor product status data from Metabase"""
-    return fetch_question_data(
+    """Fetch vendor product status data from Metabase (base CTE only)"""
+    base_df = fetch_question_data(
         question_id=QUESTION_ID_VENDOR_PRODUCT_STATUS,
         metabase_url=METABASE_URL,
         username=METABASE_USERNAME,
@@ -157,6 +157,149 @@ def fetch_vendor_product_status() -> pd.DataFrame:
         database=METABASE_DATABASE,
         page_size=METABASE_PAGE_SIZE
     )
+
+    # Process the base CTE data to calculate vendor-level aggregations
+    if base_df.empty:
+        return pd.DataFrame()
+
+    return calculate_vendor_product_status(base_df)
+
+def calculate_vendor_product_status(base_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate vendor product status from base CTE data.
+
+    Input columns (from base CTE):
+        - vendor_code
+        - vendor_name
+        - business_line
+        - vendor_product_header_name
+        - vendor_product_id
+        - product_stock (0 or positive)
+        - is_visible (0 or 1)
+
+    Output columns:
+        - vendor_code
+        - vendor_name
+        - business_line
+        - total_headers
+        - visibility_issue_headers
+        - stock_issue_headers
+        - visibility_issue_rate
+        - stock_issue_rate
+        - size_quantile
+        - vendor_visibility_status
+        - vendor_stock_status
+    """
+    import numpy as np
+
+    logger.info(f"📊 Starting vendor product status calculation for {len(base_df)} rows...")
+
+    # Step 1: Pre-calculate flags for efficiency
+    base_df['has_stock_issue'] = (base_df['product_stock'] == 0).astype(int)
+    base_df['has_visibility_issue'] = (base_df['is_visible'] == 0).astype(int)
+    base_df['has_pure_stock_issue'] = ((base_df['is_visible'] == 1) & (base_df['product_stock'] == 0)).astype(int)
+
+    logger.info("   ✓ Calculated issue flags")
+
+    # Step 2: header_issues - Calculate issues per header (optimized)
+    header_issues = base_df.groupby(
+        ['vendor_code', 'vendor_name', 'business_line', 'vendor_product_header_name'],
+        as_index=False
+    ).agg({
+        'has_stock_issue': 'max',
+        'has_visibility_issue': 'max',
+        'has_pure_stock_issue': 'max'
+    }).rename(columns={
+        'has_stock_issue': 'stock_issue',
+        'has_visibility_issue': 'visibility_issue',
+        'has_pure_stock_issue': 'pure_stock_issue'
+    })
+
+    logger.info(f"   ✓ Calculated header issues for {len(header_issues)} headers")
+
+    # Step 3: vendor_agg - Aggregate to vendor level
+    vendor_agg = header_issues.groupby(
+        ['vendor_code', 'vendor_name', 'business_line'],
+        as_index=False
+    ).agg({
+        'vendor_product_header_name': 'count',
+        'visibility_issue': 'sum',
+        'pure_stock_issue': 'sum'
+    }).rename(columns={
+        'vendor_product_header_name': 'total_headers',
+        'visibility_issue': 'visibility_issue_headers',
+        'pure_stock_issue': 'stock_issue_headers'
+    })
+
+    logger.info(f"   ✓ Aggregated to {len(vendor_agg)} vendors")
+
+    # Step 4: bounds - Calculate quantiles
+    if len(vendor_agg) > 0:
+        # Use method='linear' which is universally supported and close to ClickHouse's quantileExactInclusive
+        q20 = np.quantile(vendor_agg['total_headers'], 0.2, method='linear')
+        q40 = np.quantile(vendor_agg['total_headers'], 0.4, method='linear')
+        q60 = np.quantile(vendor_agg['total_headers'], 0.6, method='linear')
+        q80 = np.quantile(vendor_agg['total_headers'], 0.8, method='linear')
+        logger.info(f"   ✓ Calculated quantiles: Q20={q20}, Q40={q40}, Q60={q60}, Q80={q80}")
+    else:
+        q20 = q40 = q60 = q80 = 0
+
+    # Step 5: scored - Assign size quantiles and thresholds (vectorized)
+    conditions = [
+        vendor_agg['total_headers'] <= q20,
+        vendor_agg['total_headers'] <= q40,
+        vendor_agg['total_headers'] <= q60,
+        vendor_agg['total_headers'] <= q80
+    ]
+    quantile_choices = ['Q1', 'Q2', 'Q3', 'Q4']
+    threshold_choices = [0.35, 0.25, 0.20, 0.15]
+
+    vendor_agg['size_quantile'] = np.select(conditions, quantile_choices, default='Q5')
+    vendor_agg['threshold_pct'] = np.select(conditions, threshold_choices, default=0.10)
+
+    logger.info("   ✓ Assigned quantiles and thresholds")
+
+    # Step 6: Final calculations (vectorized)
+    vendor_agg['visibility_issue_rate'] = (
+        vendor_agg['visibility_issue_headers'] / vendor_agg['total_headers']
+    ).fillna(0).round(4)
+
+    vendor_agg['stock_issue_rate'] = (
+        vendor_agg['stock_issue_headers'] / vendor_agg['total_headers']
+    ).fillna(0).round(4)
+
+    # Calculate threshold counts
+    vendor_agg['visibility_threshold'] = np.ceil(
+        vendor_agg['total_headers'] * vendor_agg['threshold_pct']
+    ).astype(int)
+
+    vendor_agg['stock_threshold'] = np.ceil(
+        vendor_agg['total_headers'] * vendor_agg['threshold_pct']
+    ).astype(int)
+
+    logger.info("   ✓ Calculated rates and thresholds")
+
+    # Determine vendor status (vectorized)
+    vendor_agg['vendor_visibility_status'] = np.where(
+        vendor_agg['visibility_issue_headers'] >= vendor_agg['visibility_threshold'],
+        'vendor_product_visibility_issue',
+        'visibility_good'
+    )
+
+    vendor_agg['vendor_stock_status'] = np.where(
+        vendor_agg['stock_issue_headers'] >= vendor_agg['stock_threshold'],
+        'vendor_stock_issue',
+        'stock_good'
+    )
+
+    logger.info("   ✓ Determined vendor statuses")
+
+    # Drop intermediate columns
+    vendor_agg = vendor_agg.drop(columns=['threshold_pct', 'visibility_threshold', 'stock_threshold'])
+
+    logger.info(f"✅ Vendor product status calculation completed: {len(vendor_agg)} vendors")
+
+    return vendor_agg
 
 def filter_by_vendor_codes(df: pd.DataFrame, vendor_column: str = 'vendor_code') -> pd.DataFrame:
     """Filter DataFrame by uploaded vendor codes"""

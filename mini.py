@@ -359,7 +359,7 @@ class MetabaseSharedClient:
         page_size: int = 50_000,
         max_workers: int = 8
     ) -> Optional[pd.DataFrame]:
-        logger.info(f"🚀 Parallel pagination: workers={max_workers}, page_size={page_size:,}")
+        logger.info(f"--Parallel pagination: workers={max_workers}, page_size={page_size:,}")
 
         db_id = self._resolve_database_id(database)
         if not db_id:
@@ -375,7 +375,7 @@ class MetabaseSharedClient:
         if total_rows == 0:
             return pd.DataFrame()
         total_pages = (total_rows + page_size - 1) // page_size
-        logger.info(f"📊 total_rows={total_rows:,}, pages={total_pages}, page_size={page_size:,}")
+        logger.info(f"total_rows={total_rows:,}, pages={total_pages}, page_size={page_size:,}")
 
         def fetch_page(i: int) -> Optional[pd.DataFrame]:
             try:
