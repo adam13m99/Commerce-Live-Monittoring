@@ -3,11 +3,9 @@ stages:
   - init_ci
 
 variables:
-  KUBER_NS: "x-commerce-monitoring"
-  DOCKER_FILE_PATH: "Dockerfile"
+  KUBER_NS: "commerce-live-monitoring"
+  DOCKER_FILE_PATH: "cicd\/prd\/Dockerfile"
   TRIGGER_JOB_REF: "main"
-  LATEST: "latest"
-
 ########################################################################
 #                        DOCKER BUILD                                  #
 ########################################################################
@@ -21,11 +19,11 @@ Docker Build:
       MAG='\033[0;35m'
       NC='\033[0m' # No Color
       echo -e "${CYN}╔═══════════════════════════════════════════════════════════════╗${NC}"
-      echo -e "${CYN}║                  X-Commerce Monitoring                        ║${NC}"
+      echo -e "${CYN}║                            oFood                              ║${NC}"
       echo -e "${CYN}╚═══════════════════════════════════════════════════════════════╝${NC}"
       echo -e "${MAG}TAG:: ${CYN}$CI_COMMIT_TAG${NC}"
       echo -e "${MAG}PROJECT NAME:: ${CYN}$CI_PROJECT_NAME${NC}"
-      echo -e "${MAG}STARTING ._._._.._._._.._._._.._._._.._._._.._._._.._._._.._._._.${NC}"
+      echo -e "${WHI}STARTING ._._._.._._._.._._._.._._._.._._._.._._._.._._._.._._._.${NC}"
   script:
     - docker info
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
@@ -51,7 +49,6 @@ Initial CI:
       # INFORMATION:
       CYN='\033[0;36m'
       MAG='\033[0;35m'
-      NC='\033[0m' # No Color
       echo -e "${CYN}     ._._._.._._._.._._._.._._._.._._._.._._._.._._._.._._._.     ${NC}"
       echo -e "${MAG}TRIGGER_JOB_PROJECT_NAME:: ${CYN}$CI_COMMIT_TAG${NC}"
       echo -e "${MAG}PROJECT NAME:: ${CYN}$CI_PROJECT_NAME${NC}"

@@ -1,25 +1,16 @@
-FROM python:3.11-slim as builder
+FROM docker.ofood.cloud/library/python:3.12.7-slim
+
+ENV PIP_INDEX_URL=http://box.ofood.cloud/repository/pypi/simple/ \
+    PIP_TRUSTED_HOST=box.ofood.cloud \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /root/.local /root/.local
-
-ENV PATH=/root/.local/bin:$PATH
+RUN pip install --no-cache-dir --only-binary :all: -r requirements.txt
 
 COPY app.py .
 COPY mini.py .
@@ -28,9 +19,7 @@ COPY run_production.py .
 COPY templates/ templates/
 COPY static/ static/
 
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
-
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 5000

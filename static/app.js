@@ -6,6 +6,8 @@ const state = {
     currentTab: 'discount-stock',
     currentSubTab: 'stock',
     vendorCodes: [],
+    sessionId: null,  // Session ID for WebSocket room isolation
+    refreshTimer: null,  // Timer for periodic data refresh
     alerts: {
         discount_stock: {},
         vendor_status: {},
@@ -37,6 +39,11 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeViewToggles();
     showConnectionStatus('connected');
     setTimeout(addFilteringHeaders, 100);
+});
+
+// Stop auto-refresh when user closes/leaves page
+window.addEventListener('beforeunload', () => {
+    stopAutoRefresh();
 });
 
 // Theme Toggle
@@ -412,16 +419,84 @@ function initializeVendorUpload() {
             });
 
             const result = await response.json();
-            
+            console.log('Upload response:', result);  // DEBUG
+
             if (result.success) {
                 showNotification(`✅ Uploaded ${result.count} vendor codes. Monitoring started!`, 'success');
                 state.vendorCodes = result.count;
-                
-                // Set initial total alerts estimate
-                state.totalAlerts.discount_stock = result.count * 2; // Estimate
-                state.totalAlerts.vendor_status = result.count;
-                state.totalAlerts.product_status = result.count;
+
+                // Store session ID for WebSocket registration
+                if (result.session_id) {
+                    state.sessionId = result.session_id;
+                    console.log('Session ID:', result.session_id);  // DEBUG
+                    // Register session with WebSocket
+                    if (socket && socket.connected) {
+                        socket.emit('register_session', { session_id: result.session_id });
+                        console.log('Registered session with WebSocket');  // DEBUG
+                    }
+                }
+
+                // Process initial alerts from HTTP response
+                console.log('Processing alerts from HTTP response...');  // DEBUG
+                console.log('Alerts object:', result.alerts);  // DEBUG
+                if (result.alerts) {
+                    // Discount stock alerts
+                    if (result.alerts.discount_stock && result.alerts.discount_stock.length > 0) {
+                        console.log(`Processing ${result.alerts.discount_stock.length} discount stock alerts`);  // DEBUG
+                        result.alerts.discount_stock.forEach(alert => {
+                            handleNewAlert({ tab: 'discount_stock', alert: alert, is_new: true });
+                        });
+                    }
+                    // Vendor status alerts
+                    if (result.alerts.vendor_status && result.alerts.vendor_status.length > 0) {
+                        console.log(`Processing ${result.alerts.vendor_status.length} vendor status alerts`);  // DEBUG
+                        result.alerts.vendor_status.forEach(alert => {
+                            handleNewAlert({ tab: 'vendor_status', alert: alert, is_new: true });
+                        });
+                    }
+                    // Stock alerts
+                    if (result.alerts.vendor_product_stock && result.alerts.vendor_product_stock.length > 0) {
+                        console.log(`Processing ${result.alerts.vendor_product_stock.length} stock alerts`);  // DEBUG
+                        result.alerts.vendor_product_stock.forEach(alert => {
+                            handleNewAlert({ tab: 'vendor_product_stock', alert: alert, is_new: true });
+                        });
+                    }
+                    // Visibility alerts
+                    if (result.alerts.vendor_product_visibility && result.alerts.vendor_product_visibility.length > 0) {
+                        console.log(`Processing ${result.alerts.vendor_product_visibility.length} visibility alerts`);  // DEBUG
+                        result.alerts.vendor_product_visibility.forEach(alert => {
+                            handleNewAlert({ tab: 'vendor_product_visibility', alert: alert, is_new: true });
+                        });
+                    }
+                }
+
+                // Update stats if provided
+                console.log('Processing stats...');  // DEBUG
+                if (result.stats) {
+                    console.log('Stats:', result.stats);  // DEBUG
+                    if (result.stats.vendor_status) {
+                        handleStatsUpdate({ type: 'vendor_status', ...result.stats.vendor_status });
+                    }
+                    if (result.stats.vendor_product) {
+                        handleStatsUpdate({ type: 'vendor_product', ...result.stats.vendor_product });
+                    }
+                }
+
+                // Set total alerts from actual data counts
+                if (result.cache_status && result.cache_status.data_counts) {
+                    console.log('Data counts:', result.cache_status.data_counts);  // DEBUG
+                    state.totalAlerts.discount_stock = result.cache_status.data_counts.discount_stock;
+                    state.totalAlerts.vendor_status = result.cache_status.data_counts.vendor_status;
+                    state.totalAlerts.product_status = result.cache_status.data_counts.vendor_product_status;
+                    console.log('Total alerts updated:', state.totalAlerts);  // DEBUG
+                }
+
+                console.log('✅ Upload processing complete');  // DEBUG
+
+                // Start auto-refresh timer (every 3 minutes)
+                startAutoRefresh();
             } else {
+                console.error('Upload failed:', result);  // DEBUG
                 showNotification('Error uploading vendors', 'error');
             }
         } catch (error) {
@@ -443,8 +518,15 @@ function initializeVendorUpload() {
             });
 
             const result = await response.json();
-            
+
             if (result.success) {
+                // Stop auto-refresh timer
+                stopAutoRefresh();
+
+                // Clear state
+                state.sessionId = null;
+                state.vendorCodes = 0;
+
                 clearAllTables();
                 clearAllStats();
                 showNotification('🛑 Cleared all vendor codes. Monitoring stopped.', 'success');
@@ -454,6 +536,112 @@ function initializeVendorUpload() {
             showNotification('Error clearing vendors', 'error');
         }
     });
+}
+
+// Auto-refresh functions
+function startAutoRefresh() {
+    // Clear any existing timer
+    stopAutoRefresh();
+
+    console.log('🔄 Starting auto-refresh (every 3 minutes)...');
+
+    // Refresh every 3 minutes (180,000 milliseconds)
+    state.refreshTimer = setInterval(async () => {
+        if (!state.sessionId) {
+            console.warn('No session ID - stopping auto-refresh');
+            stopAutoRefresh();
+            return;
+        }
+
+        console.log('⏰ Auto-refresh triggered - fetching fresh data...');
+        await refreshData();
+    }, 180000);  // 3 minutes
+}
+
+function stopAutoRefresh() {
+    if (state.refreshTimer) {
+        clearInterval(state.refreshTimer);
+        state.refreshTimer = null;
+        console.log('🛑 Auto-refresh stopped');
+    }
+}
+
+async function refreshData() {
+    if (!state.sessionId) {
+        console.error('Cannot refresh: no session ID');
+        return;
+    }
+
+    try {
+        console.log(`📥 Fetching fresh data for session ${state.sessionId}...`);
+
+        const response = await fetch(`/api/refresh-data/${state.sessionId}`);
+        const result = await response.json();
+
+        if (result.success) {
+            console.log('✅ Received fresh data:', result);
+            processRefreshData(result);
+            showNotification('🔄 Data refreshed successfully', 'success');
+        } else {
+            console.error('Refresh failed:', result);
+            if (response.status === 404) {
+                // Session expired
+                showNotification('⚠️ Session expired. Please upload vendors again.', 'warning');
+                stopAutoRefresh();
+                state.sessionId = null;
+            }
+        }
+    } catch (error) {
+        console.error('Error refreshing data:', error);
+        showNotification('⚠️ Failed to refresh data', 'error');
+    }
+}
+
+function processRefreshData(data) {
+    console.log('🔄 Processing refreshed data...');
+
+    // Process new/updated alerts
+    if (data.alerts) {
+        // Discount stock alerts
+        if (data.alerts.discount_stock) {
+            data.alerts.discount_stock.forEach(alert => {
+                handleNewAlert({ tab: 'discount_stock', alert: alert, is_new: false });
+            });
+        }
+
+        // Vendor status alerts
+        if (data.alerts.vendor_status) {
+            data.alerts.vendor_status.forEach(alert => {
+                handleNewAlert({ tab: 'vendor_status', alert: alert, is_new: false });
+            });
+        }
+
+        // Stock alerts
+        if (data.alerts.vendor_product_stock) {
+            data.alerts.vendor_product_stock.forEach(alert => {
+                handleNewAlert({ tab: 'vendor_product_stock', alert: alert, is_new: false });
+            });
+        }
+
+        // Visibility alerts
+        if (data.alerts.vendor_product_visibility) {
+            data.alerts.vendor_product_visibility.forEach(alert => {
+                handleNewAlert({ tab: 'vendor_product_visibility', alert: alert, is_new: false });
+            });
+        }
+    }
+
+    // Update stats
+    if (data.stats) {
+        if (data.stats.vendor_status) {
+            handleStatsUpdate({ type: 'vendor_status', ...data.stats.vendor_status });
+        }
+        if (data.stats.vendor_product) {
+            handleStatsUpdate({ type: 'vendor_product', ...data.stats.vendor_product });
+        }
+    }
+
+    console.log('✅ Refresh processing complete');
 }
 
 // WebSocket Event Handlers

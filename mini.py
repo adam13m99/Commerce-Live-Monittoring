@@ -1,4 +1,3 @@
-# metabase_shared.py
 """
 Shared Metabase client with cross-process session reuse.
 

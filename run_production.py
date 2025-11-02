@@ -72,10 +72,53 @@ class GunicornConfig:
     # Server mechanics
     daemon = False
     pidfile = None
+    # CRITICAL: Must be False for eventlet workers
+    # preload_app = True breaks eventlet after fork (monkey patching issues)
+    preload_app = False
 
     # SSL (if needed)
     keyfile = os.getenv('SSL_KEY_FILE')
     certfile = os.getenv('SSL_CERT_FILE')
+
+    # Worker lifecycle hooks
+    @staticmethod
+    def post_worker_init(worker):
+        """Called after worker initialization - perform initial fetch then start background jobs"""
+        import logging
+        import time
+        from app import perform_initial_fetch, start_background_jobs
+
+        logger = logging.getLogger(__name__)
+
+        # STEP 0: Startup delay to allow DNS to fully initialize in containerized environments
+        # This is critical in Kubernetes/Docker where DNS may not be immediately available
+        startup_delay = int(os.getenv('STARTUP_DELAY_SECONDS', '3'))
+        if startup_delay > 0:
+            logger.info(f"⏳ Worker {worker.pid} waiting {startup_delay}s for DNS initialization...")
+            time.sleep(startup_delay)
+            logger.info(f"✅ Worker {worker.pid} startup delay complete")
+
+        # STEP 1: Perform initial data fetch (BLOCKING - must complete before serving requests)
+        logger.info(f"🔄 Worker {worker.pid} performing initial data fetch...")
+        try:
+            fetch_success = perform_initial_fetch()
+            if fetch_success:
+                logger.info(f"✅ Worker {worker.pid} initial fetch completed successfully")
+            else:
+                logger.warning(f"⚠️  Worker {worker.pid} initial fetch had errors (see logs above)")
+        except Exception as e:
+            logger.error(f"❌ Worker {worker.pid} initial fetch failed: {e}")
+            logger.error("Application will start but may not have data available")
+
+        # STEP 2: Start background jobs (for periodic refreshes)
+        logger.info(f"🔄 Worker {worker.pid} starting background jobs...")
+        try:
+            start_background_jobs()
+            logger.info(f"✅ Worker {worker.pid} background jobs started")
+        except Exception as e:
+            logger.error(f"❌ Worker {worker.pid} failed to start background jobs: {e}")
+
+        logger.info(f"✅ Worker {worker.pid} initialized and ready to handle requests")
 
 # =============================================================================
 # CUSTOM GUNICORN APPLICATION
@@ -84,9 +127,9 @@ class GunicornConfig:
 class VendorMonitoringApp(BaseApplication):
     """
     Custom Gunicorn application that:
-    1. Starts background jobs before starting server
-    2. Loads Flask + SocketIO application
-    3. Applies configuration
+    1. Loads Flask + SocketIO application
+    2. Applies Gunicorn configuration
+    3. Starts background jobs in worker via post_worker_init hook
     """
 
     def __init__(self, app, options=None):
@@ -108,6 +151,7 @@ class VendorMonitoringApp(BaseApplication):
 
     def load(self):
         """Load the Flask + SocketIO application"""
+        logger.info("🔄 Worker loading application...")
         return self.application
 
     def init(self, parser, opts, args):
@@ -124,8 +168,7 @@ def start_application():
 
     Steps:
     1. Import Flask app and SocketIO
-    2. Start background monitoring jobs
-    3. Start Gunicorn server
+    2. Start Gunicorn server (background jobs start in worker via post_worker_init hook)
     """
 
     logger.info("=" * 60)
@@ -133,29 +176,19 @@ def start_application():
     logger.info("=" * 60)
 
     # Step 1: Import application
-    logger.info("Step 1/3: Loading Flask application...")
+    logger.info("Step 1/2: Loading Flask application...")
     try:
-        from app import app, socketio, start_background_jobs
+        from app import app, socketio
         logger.info("✅ Flask application loaded successfully")
     except ImportError as e:
         logger.error(f"❌ Failed to import application: {e}")
         logger.error("Make sure app.py, config.py, and mini.py are in the same directory")
         sys.exit(1)
 
-    # Step 2: Start background jobs
-    logger.info("Step 2/3: Starting background monitoring jobs...")
-    try:
-        start_background_jobs()
-        logger.info("✅ Background jobs started:")
-        logger.info("   - Discount Stock Monitoring (every 5 minutes)")
-        logger.info("   - Vendor Status Monitoring (every 5 minutes)")
-        logger.info("   - Vendor Product Status Monitoring (every 6 minutes)")
-    except Exception as e:
-        logger.error(f"❌ Failed to start background jobs: {e}")
-        sys.exit(1)
-
-    # Step 3: Start Gunicorn server
-    logger.info("Step 3/3: Starting Gunicorn server...")
+    # Step 2: Start Gunicorn server
+    # NOTE: Background jobs will start in worker via post_worker_init hook
+    logger.info("Step 2/2: Starting Gunicorn server...")
+    logger.info("   (Background jobs will start in worker after eventlet initialization)")
     logger.info(f"Server configuration:")
     logger.info(f"   - Bind address: {GunicornConfig.bind}")
     logger.info(f"   - Workers: {GunicornConfig.workers}")
@@ -166,7 +199,8 @@ def start_application():
 
     try:
         # Create and run Gunicorn application
-        gunicorn_app = VendorMonitoringApp(socketio, options={})
+        # IMPORTANT: Pass 'app' not 'socketio' - SocketIO is already attached to app
+        gunicorn_app = VendorMonitoringApp(app, options={})
         gunicorn_app.run()
     except KeyboardInterrupt:
         logger.info("Received shutdown signal, stopping server...")
