@@ -1,8 +1,8 @@
 import os
 
-METABASE_URL = "https://metabase.tapsifood.cloud"
-METABASE_USERNAME = "a.mehmandoost@OFOOD.CLOUD"
-METABASE_PASSWORD = "Fff322666@"
+METABASE_URL = os.getenv("METABASE_URL", "https://metabase.ofood.cloud")
+METABASE_USERNAME = os.getenv("METABASE_USERNAME", "METABASE_USERNAME")
+METABASE_PASSWORD = os.getenv("METABASE_PASSWORD", "METABASE_PASSWORD")
 
 METABASE_DATABASE = os.getenv('METABASE_DATABASE', 'data')
 METABASE_PAGE_SIZE = int(os.getenv('METABASE_PAGE_SIZE', '5000000'))

@@ -220,6 +220,24 @@ def calculate_discount_severity(discount_stock: int) -> str:
 # HELPER FUNCTIONS FOR MULTI-USER SUPPORT
 # =============================================================================
 
+def create_new_session_for_upload(vendor_codes: Set[str]) -> str:
+    """
+    Create a fresh session for this upload.
+
+    DESIGN: Each upload = new session. This is simpler and avoids confusion.
+    - First upload: creates session A
+    - Second upload: creates session B (fresh, replaces A in frontend)
+    - Frontend always displays the most recent session's data
+    - Old sessions are cleaned up by cleanup_old_sessions()
+
+    Returns:
+        session_id: The new session ID
+    """
+    session_id = create_user_session(vendor_codes)
+    logger.info(f"📝 New session created for upload: {session_id[:8]}... | Vendors: {len(vendor_codes)}")
+    return session_id
+
+
 def create_user_session(vendor_codes: Set[str]) -> str:
     """Create a new user session and return session ID"""
     session_id = str(uuid.uuid4())
@@ -233,51 +251,82 @@ def create_user_session(vendor_codes: Set[str]) -> str:
     logger.info(f"✅ SESSION CREATED: {session_id[:8]}... | Vendors: {len(vendor_codes)} | Status: active")
     return session_id
 
-def is_session_valid(session_id: str, max_age_hours: float = 5/60) -> bool:
-    """Check if a session is valid (exists and not expired). Default: 5 minutes"""
-    now = get_tehran_time()
+def is_session_valid(session_id: str) -> bool:
+    """
+    Check if a session is valid and currently active (WebSocket connected).
+
+    Args:
+        session_id: Session UUID
+
+    Returns:
+        True if session exists and is active, False otherwise
+    """
     with TimedLock(state.lock, timeout=30, name="is_session_valid"):
         if session_id not in state.user_sessions:
             return False
 
         session = state.user_sessions[session_id]
-        age_hours = (now - session['last_accessed']).total_seconds() / 3600
-        is_expired = age_hours > max_age_hours
-
-        if is_expired:
-            # Mark as expired if not already
-            if session.get('status') != 'expired':
-                session['status'] = 'expired'
-                session['expired_at'] = now
-                logger.info(f"⏱️  SESSION EXPIRED: {session_id[:8]}... | Inactive for {age_hours:.1f}h | Status: expired")
-            return False
-
+        # Session is valid only if WebSocket is currently connected
         return session.get('status') == 'active'
 
+def is_session_active_for_update(session_id: str) -> tuple[bool, Optional[Set[str]], str]:
+    """
+    Check if a session is active and ready to receive updates.
+    Returns: (is_active, vendor_codes, reason)
+
+    This function is called within the update loop to prevent race conditions
+    where a session status changes between the initial snapshot and processing.
+    Must be called with the lock already held.
+    """
+    if session_id not in state.user_sessions:
+        return False, None, "session_deleted"
+
+    session = state.user_sessions[session_id]
+    status = session.get('status')
+
+    if status == 'active':
+        return True, session.get('vendor_codes'), "active"
+    elif status == 'disconnected':
+        return False, None, "disconnected"
+    elif status == 'expired':
+        return False, None, "expired"
+    else:
+        return False, None, f"unknown_status_{status}"
+
 def get_session_vendor_codes(session_id: str) -> Optional[Set[str]]:
-    """Get vendor codes for a session, update last accessed time"""
+    """
+    Get vendor codes for a session if it's still active (WebSocket connected).
+
+    Args:
+        session_id: Session UUID
+
+    Returns:
+        Set of vendor codes if session is active/connected, None otherwise
+    """
     with TimedLock(state.lock, timeout=30, name="get_session_vendor_codes"):
-        if session_id in state.user_sessions:
-            session = state.user_sessions[session_id]
-            # Check if session is expired
-            now = get_tehran_time()
-            age_hours = (now - session['last_accessed']).total_seconds() / 3600
+        if session_id not in state.user_sessions:
+            return None
 
-            if age_hours > 5/60:  # 5 minutes
-                if session.get('status') != 'expired':
-                    session['status'] = 'expired'
-                    session['expired_at'] = now
-                    logger.warning(f"⏱️  SESSION EXPIRED: {session_id[:8]}... | Inactive for {age_hours:.1f}h")
-                return None
+        session = state.user_sessions[session_id]
+        status = session.get('status')
 
-            # Update last accessed time only if session is active
-            if session.get('status') == 'active':
-                session['last_accessed'] = now
-                return session['vendor_codes']
-    return None
+        # Only return vendor codes if session is still actively connected
+        if status == 'active':
+            return session['vendor_codes']
+        else:
+            # Session is disconnected or expired, don't process it
+            return None
 
 def filter_data_for_session(session_id: str) -> Dict[str, pd.DataFrame]:
-    """Filter all cached data for a specific user session"""
+    """
+    Filter all cached data for a specific user session (only if WebSocket is connected).
+
+    Args:
+        session_id: Session UUID
+
+    Returns:
+        Dictionary with filtered DataFrames for this session's vendor codes
+    """
     vendor_codes = get_session_vendor_codes(session_id)
     if not vendor_codes:
         return {
@@ -308,43 +357,57 @@ def filter_data_for_session(session_id: str) -> Dict[str, pd.DataFrame]:
         'vendor_product_status': product_df
     }
 
-def cleanup_old_sessions(max_age_hours: float = 5/60):
+def cleanup_old_sessions(grace_period_minutes: float = 2):
     """
-    Remove sessions older than max_age_hours (default 5 minutes).
-    This function gracefully handles session cleanup:
-    1. Identifies sessions inactive for more than max_age_hours
-    2. Marks them as 'expired' first (graceful handling)
-    3. Removes them from active sessions
+    Remove sessions that have been disconnected for longer than grace_period_minutes.
+    This handles network hiccups and allows WebSocket reconnection attempts.
+
+    Args:
+        grace_period_minutes: How long to keep disconnected sessions (default: 2 minutes)
     """
     now = get_tehran_time()
+    grace_period_seconds = grace_period_minutes * 60
+
     with TimedLock(state.lock, timeout=30, name="cleanup_old_sessions"):
-        expired_sessions = [
-            sid for sid, session in state.user_sessions.items()
-            if (now - session['last_accessed']).total_seconds() / 3600 > max_age_hours
-        ]
+        sessions_to_remove = []
 
-        if expired_sessions:
-            logger.info(f"🧹 SESSION CLEANUP: Found {len(expired_sessions)} expired session(s)")
+        for sid, session in list(state.user_sessions.items()):
+            status = session.get('status')
 
-            for sid in expired_sessions:
+            # Only cleanup disconnected sessions (active sessions stay forever)
+            if status == 'disconnected':
+                disconnected_at = session.get('disconnected_at')
+                if disconnected_at:
+                    time_disconnected = (now - disconnected_at).total_seconds()
+
+                    # If grace period has passed, mark for removal
+                    if time_disconnected > grace_period_seconds:
+                        sessions_to_remove.append(sid)
+
+        if sessions_to_remove:
+            logger.info(f"🧹 SESSION CLEANUP: Removing {len(sessions_to_remove)} disconnected session(s) (grace period expired)")
+
+            for sid in sessions_to_remove:
                 session = state.user_sessions[sid]
-                age_hours = (now - session['last_accessed']).total_seconds() / 3600
+                disconnected_at = session.get('disconnected_at')
+                time_disconnected = (now - disconnected_at).total_seconds() if disconnected_at else 0
                 vendor_count = len(session.get('vendor_codes', set()))
 
-                # Mark as expired before removal for graceful handling
+                # Mark as expired before removal
                 session['status'] = 'expired'
                 session['cleaned_up_at'] = now
 
                 # Remove the expired session
                 del state.user_sessions[sid]
+
                 logger.info(
                     f"   🗑️  Removed session {sid[:8]}... | "
-                    f"Age: {age_hours:.1f}h | "
+                    f"Disconnected: {time_disconnected:.0f}s ago | "
                     f"Vendors: {vendor_count} | "
                     f"Status: expired"
                 )
 
-            logger.info(f"✅ Cleanup complete: {len(expired_sessions)} expired session(s) removed")
+            logger.info(f"✅ Cleanup complete: {len(sessions_to_remove)} session(s) removed")
         else:
             logger.debug(f"✅ SESSION CLEANUP: No expired sessions found")
 
@@ -1157,14 +1220,23 @@ def update_all_sessions_with_new_data():
 
     for session_id, session_data in connected_sessions:
         try:
-            # Skip if session is not active
-            if session_data.get('status') != 'active':
-                logger.debug(f"   ⏸️  Skipped session {session_id[:8]}... (status: {session_data.get('status')})")
-                continue
+            # RE-CHECK session status from current state (not snapshot!)
+            # CRITICAL: This prevents race condition where session is marked disconnected
+            # after the initial snapshot but before we process it
+            with TimedLock(state.lock, timeout=30, name="update_all_sessions_check_status"):
+                is_active, vendor_codes, reason = is_session_active_for_update(session_id)
 
-            vendor_codes = session_data['vendor_codes']
+                if not is_active:
+                    reason_msg = {
+                        'session_deleted': 'was deleted',
+                        'disconnected': 'status changed to disconnected',
+                        'expired': 'status changed to expired',
+                    }.get(reason, f'reason: {reason}')
+                    logger.debug(f"   ⏸️  Skipped session {session_id[:8]}... ({reason_msg})")
+                    continue
 
-            # Filter new data for this session
+            # Now safe to update using current data
+            # Session activity is based purely on WebSocket connection status
             filtered_data = filter_data_for_session(session_id)
 
             # CRITICAL FIX: Do NOT update global state - each session is isolated
@@ -1226,9 +1298,9 @@ def centralized_fetch_job():
             # Update all active sessions with new data
             update_all_sessions_with_new_data()
 
-            # Cleanup old sessions periodically (5 minutes)
-            # Sessions inactive for 5 minutes are automatically removed
-            cleanup_old_sessions(max_age_hours=5/60)
+            # Cleanup disconnected sessions (2-minute grace period)
+            # Sessions that were disconnected >2 minutes ago are removed from memory
+            cleanup_old_sessions(grace_period_minutes=2)
 
             logger.info("=" * 70)
             logger.info(f"✅ SCHEDULED FETCH COMPLETE - Sleeping for {interval}s")
@@ -1426,8 +1498,8 @@ def upload_vendors():
     try:
         # ========== STEP 1: Parse vendor codes from request ==========
         vendors = []
-        parse_error = None
 
+        # Parse vendor codes from request (file or JSON)
         try:
             if 'file' in request.files:
                 file = request.files['file']
@@ -1472,15 +1544,51 @@ def upload_vendors():
                 'initial_fetch_complete': False
             }), 503
 
-        # ========== STEP 3: Create user session ==========
+        # ========== STEP 3: Check if there's already an active session ==========
+        # CRITICAL: Users must CLEAR the current vendor codes before uploading new ones
+        # This prevents confusion from multiple active sessions
         try:
-            session_id = create_user_session(vendor_codes_set)
+            with TimedLock(state.lock, timeout=30, name="check_active_session"):
+                # Check if there's already an active session for this client
+                active_sessions = [
+                    sid for sid, session in state.user_sessions.items()
+                    if session.get('status') == 'active'
+                ]
+
+                if active_sessions:
+                    # There's already an active session
+                    active_session_id = active_sessions[0]
+                    vendor_count = len(state.user_sessions[active_session_id].get('vendor_codes', set()))
+
+                    logger.warning(
+                        f"⚠️  UPLOAD REJECTED: Active session already exists | "
+                        f"Session: {active_session_id[:8]}... | "
+                        f"Vendors: {vendor_count} | "
+                        f"User must clear first"
+                    )
+
+                    return jsonify({
+                        'error': 'You already have vendor codes loaded. Please click "Clear vendor codes" button first.',
+                        'current_session_id': active_session_id,
+                        'current_vendor_count': vendor_count,
+                        'action_required': 'clear_first'
+                    }), 409  # 409 Conflict
+
+        except Exception as e:
+            logger.error(f"Error checking active session: {e}")
+            logger.error(traceback.format_exc())
+            return jsonify({'error': f'Error validating upload: {str(e)}'}), 500
+
+        # ========== STEP 4: Create new session for this upload ==========
+        # No active session exists, safe to create new one
+        try:
+            session_id = create_new_session_for_upload(vendor_codes_set)
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
             logger.error(traceback.format_exc())
             return jsonify({'error': f'Failed to create session: {str(e)}'}), 500
 
-        # ========== STEP 4: Filter data from cache ==========
+        # ========== STEP 5: Filter data from cache ==========
         try:
             filtered_data = filter_data_for_session(session_id)
         except Exception as e:
@@ -1492,7 +1600,7 @@ def upload_vendors():
                 'count': len(vendor_codes_set)
             }), 500
 
-        # ========== STEP 4.5: Process alerts for THIS SESSION ONLY ==========
+        # ========== STEP 6: Process alerts for THIS SESSION ONLY ==========
         # CRITICAL FIX: Do NOT update global state - each session is isolated
         # Process alerts and emit ONLY to this session's WebSocket room
         try:
@@ -1519,7 +1627,7 @@ def upload_vendors():
             logger.error(traceback.format_exc())
             # Continue even if alert processing fails
 
-        # ========== STEP 5: Prepare response with ACTUAL DATA ==========
+        # ========== STEP 7: Prepare response with ACTUAL DATA ==========
         # CRITICAL: Return data in HTTP response instead of relying on WebSocket
         # WebSocket may not be connected yet, so HTTP response ensures data delivery
         response = {
@@ -1681,14 +1789,14 @@ def get_session_status(session_id):
     Check the status of a specific user session.
 
     Returns:
-        - Session status: active, inactive, disconnected, or expired
-        - Session metadata: created_at, last_accessed, connected_at, disconnected_at
-        - Time remaining until expiry
+        - Session status: active, disconnected, or expired
+        - Session metadata: created_at, connected_at, disconnected_at
+        - Time since disconnection (if disconnected)
 
     Status values:
-        - active: Connected and receiving updates
-        - disconnected: User closed window/tab but data preserved for 5 minutes
-        - expired: Session exceeded 5-minute inactivity timeout and has been removed
+        - active: WebSocket connected, receiving real-time updates
+        - disconnected: WebSocket closed, grace period active (2 minutes)
+        - expired: Grace period expired, session removed from memory
     """
     try:
         with TimedLock(state.lock, timeout=30, name="get_session_status"):
@@ -1701,32 +1809,35 @@ def get_session_status(session_id):
 
             session = state.user_sessions[session_id]
             now = get_tehran_time()
-            last_accessed = session.get('last_accessed')
-            inactivity_hours = (now - last_accessed).total_seconds() / 3600 if last_accessed else None
-
-            # Check if session is expired (5 minutes = 5/60 hours)
-            is_expired = inactivity_hours and inactivity_hours > 5/60
+            status = session.get('status')
 
             response = {
                 'success': True,
                 'session_id': session_id,
-                'status': session.get('status', 'active'),
+                'status': status,
                 'vendor_count': len(session.get('vendor_codes', set())),
                 'metadata': {
                     'created_at': session['created_at'].isoformat(),
-                    'last_accessed': last_accessed.isoformat() if last_accessed else None,
                     'connected_at': session.get('connected_at', {}).isoformat() if session.get('connected_at') else None,
                     'disconnected_at': session.get('disconnected_at', {}).isoformat() if session.get('disconnected_at') else None,
-                    'inactivity_hours': round(inactivity_hours, 2) if inactivity_hours else None
-                },
-                'expiry': {
-                    'expires_in_hours': round(5/60 - (inactivity_hours or 0), 2),
-                    'will_expire_at': (last_accessed + __import__('datetime').timedelta(hours=5/60)).isoformat() if last_accessed else None,
-                    'is_expired': is_expired
                 }
             }
 
-            logger.info(f"ℹ️  Session status check: {session_id[:8]}... | Status: {response['status']} | Inactivity: {inactivity_hours:.1f}h")
+            # If disconnected, show how long until cleanup (grace period)
+            if status == 'disconnected':
+                disconnected_at = session.get('disconnected_at')
+                if disconnected_at:
+                    time_disconnected = (now - disconnected_at).total_seconds()
+                    grace_period_seconds = 2 * 60  # 2 minutes
+                    time_remaining = grace_period_seconds - time_disconnected
+
+                    response['grace_period'] = {
+                        'disconnected_seconds_ago': round(time_disconnected),
+                        'cleanup_in_seconds': max(0, round(time_remaining)),
+                        'will_expire_at': (disconnected_at + __import__('datetime').timedelta(seconds=grace_period_seconds)).isoformat()
+                    }
+
+            logger.info(f"ℹ️  Session status check: {session_id[:8]}... | Status: {status} | Vendors: {response['vendor_count']}")
 
             return jsonify(response), 200
 
@@ -1845,31 +1956,58 @@ def refresh_data(session_id):
             'session_id': session_id
         }), 500
 
-@app.route('/api/clear-vendors', methods=['POST'])
-def clear_vendors():
+@app.route('/api/clear-vendors/<session_id>', methods=['POST'])
+def clear_vendors(session_id):
+    """
+    Clear vendor codes by disconnecting the session.
+
+    This is the proper way to clear:
+    1. User clicks "Clear vendor codes" button
+    2. Frontend calls this endpoint with session_id
+    3. Session is marked as 'disconnected'
+    4. Session stops receiving updates immediately
+    5. Session is cleaned up after 2-minute grace period
+    6. Frontend can then upload new vendor codes for a fresh session
+
+    This prevents confusion from multiple sessions/data.
+    """
     try:
         with TimedLock(state.lock, timeout=30, name="clear_vendors"):
-            state.vendor_codes.clear()
-            state.alerts = {
-                'discount_stock': {},
-                'vendor_status': {},
-                'vendor_product_stock': {},
-                'vendor_product_visibility': {}
-            }
-            state.cleared_alerts = {
-                'discount_stock': {},
-                'vendor_status': {},
-                'vendor_product_stock': {},
-                'vendor_product_visibility': {}
-            }
-            state.previous_vendor_status.clear()
-            state.previous_product_status.clear()
-        
-        socketio.emit('clear_all_alerts')
-        logger.info("Cleared all vendor codes and alerts")
-        return jsonify({'success': True})
+            if session_id not in state.user_sessions:
+                return jsonify({
+                    'error': 'Session not found or already cleared',
+                    'session_id': session_id
+                }), 404
+
+            session = state.user_sessions[session_id]
+
+            # Mark session as disconnected (this stops updates from being sent)
+            old_status = session.get('status')
+            session['status'] = 'disconnected'
+            session['disconnected_at'] = get_tehran_time()
+            vendor_count = len(session.get('vendor_codes', set()))
+
+            logger.info(
+                f"🧹 VENDOR CODES CLEARED: {session_id[:8]}... | "
+                f"Previous status: {old_status} | "
+                f"Vendors cleared: {vendor_count} | "
+                f"New status: disconnected | "
+                f"Session will be removed in 2 minutes"
+            )
+
+        # Emit to frontend to clear display
+        socketio.emit('clear_all_alerts', room=session_id)
+
+        return jsonify({
+            'success': True,
+            'message': 'Vendor codes cleared. Session disconnected. You can now upload new vendor codes.',
+            'session_id': session_id,
+            'vendors_cleared': vendor_count
+        }), 200
+
     except Exception as e:
         logger.error(f"Error clearing vendors: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/export-cleared-discount-alerts')
@@ -2121,7 +2259,7 @@ def handle_disconnect():
                     f"Previous status: {old_status} | "
                     f"Vendors: {vendor_count} | "
                     f"New status: disconnected | "
-                    f"Will expire in 5 minutes"
+                    f"Will be removed in 2 minutes (grace period)"
                 )
                 break
 

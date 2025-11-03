@@ -400,10 +400,52 @@ function sortTable(tableId, columnIndex, direction) {
     sortedRows.forEach(row => tbody.appendChild(row));
 }
 
+// Button State Management
+function lockUploadButton() {
+    const uploadLabel = document.querySelector('label[for="vendor-upload"]');
+    const clearButton = document.getElementById('clear-vendors');
+
+    if (uploadLabel) {
+        uploadLabel.style.opacity = '0.5';
+        uploadLabel.style.cursor = 'not-allowed';
+        uploadLabel.style.pointerEvents = 'none';
+        uploadLabel.setAttribute('title', 'Please clear vendor codes first before uploading new ones');
+    }
+
+    if (clearButton) {
+        clearButton.style.opacity = '1';
+        clearButton.style.cursor = 'pointer';
+        clearButton.style.pointerEvents = 'auto';
+        clearButton.disabled = false;
+    }
+}
+
+function unlockUploadButton() {
+    const uploadLabel = document.querySelector('label[for="vendor-upload"]');
+    const clearButton = document.getElementById('clear-vendors');
+
+    if (uploadLabel) {
+        uploadLabel.style.opacity = '1';
+        uploadLabel.style.cursor = 'pointer';
+        uploadLabel.style.pointerEvents = 'auto';
+        uploadLabel.setAttribute('title', 'Click to upload vendor codes file');
+    }
+
+    if (clearButton) {
+        clearButton.style.opacity = '0.5';
+        clearButton.style.cursor = 'not-allowed';
+        clearButton.style.pointerEvents = 'none';
+        clearButton.disabled = true;
+    }
+}
+
 // Vendor Upload
 function initializeVendorUpload() {
     const uploadInput = document.getElementById('vendor-upload');
     const clearButton = document.getElementById('clear-vendors');
+
+    // Initialize button states on page load
+    unlockUploadButton();
 
     uploadInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
@@ -420,6 +462,15 @@ function initializeVendorUpload() {
 
             const result = await response.json();
             console.log('Upload response:', result);  // DEBUG
+
+            // Handle 409 Conflict - active session already exists
+            if (response.status === 409) {
+                console.warn('Upload rejected: Active session exists', result);  // DEBUG
+                showNotification('⚠️ You already have vendor codes loaded. Please click "Clear vendor codes" button first.', 'error');
+                lockUploadButton();
+                uploadInput.value = '';
+                return;
+            }
 
             if (result.success) {
                 showNotification(`✅ Uploaded ${result.count} vendor codes. Monitoring started!`, 'success');
@@ -493,6 +544,9 @@ function initializeVendorUpload() {
 
                 console.log('✅ Upload processing complete');  // DEBUG
 
+                // Lock the upload button after successful upload
+                lockUploadButton();
+
                 // Start auto-refresh timer (every 3 minutes)
                 startAutoRefresh();
             } else {
@@ -512,8 +566,20 @@ function initializeVendorUpload() {
             return;
         }
 
+        // Disable clear button during the request
+        clearButton.disabled = true;
+        clearButton.style.opacity = '0.5';
+
         try {
-            const response = await fetch('/api/clear-vendors', {
+            const sessionId = state.sessionId;
+            if (!sessionId) {
+                showNotification('⚠️ No active session to clear', 'error');
+                clearButton.disabled = false;
+                clearButton.style.opacity = '1';
+                return;
+            }
+
+            const response = await fetch(`/api/clear-vendors/${sessionId}`, {
                 method: 'POST'
             });
 
@@ -530,10 +596,20 @@ function initializeVendorUpload() {
                 clearAllTables();
                 clearAllStats();
                 showNotification('🛑 Cleared all vendor codes. Monitoring stopped.', 'success');
+
+                // Unlock the upload button after clearing
+                unlockUploadButton();
+            } else {
+                console.error('Clear failed:', result);  // DEBUG
+                showNotification('Error clearing vendor codes', 'error');
+                clearButton.disabled = false;
+                clearButton.style.opacity = '1';
             }
         } catch (error) {
             console.error('Error clearing vendors:', error);
             showNotification('Error clearing vendors', 'error');
+            clearButton.disabled = false;
+            clearButton.style.opacity = '1';
         }
     });
 }
